@@ -1,12 +1,13 @@
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use objc2::runtime::ProtocolObject;
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use raw_window_metal::Layer;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 use objc2::rc::Retained;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use objc2::runtime::ProtocolObject;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 use objc2_metal::{
     MTLClearColor as MetalMTLClearColor, MTLCommandBuffer as MetalMTLCommandBuffer,
     MTLCommandEncoder as MetalMTLCommandEncoder, MTLCommandQueue as MetalMTLCommandQueue,
@@ -15,6 +16,9 @@ use objc2_metal::{
     MTLRenderPassColorAttachmentDescriptor as MetalMTLRenderPassColorAttachmentDescriptor,
     MTLRenderPassDescriptor as MetalMTLRenderPassDescriptor, MTLStoreAction as MetalMTLStoreAction,
 };
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
+
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 pub struct BMLInstance {
