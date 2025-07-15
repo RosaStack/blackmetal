@@ -5,6 +5,7 @@ use std::sync::Arc;
 #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
+#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
 use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice as MetalMTLDevice};
 
 pub struct MTLDevice {
@@ -45,5 +46,9 @@ impl MTLDevice {
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn metal_device(&self) -> &Retained<ProtocolObject<dyn MetalMTLDevice>> {
         &self.metal_device
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
