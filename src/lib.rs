@@ -1,42 +1,29 @@
+pub mod device;
+pub mod instance;
+
 use raw_window_metal::Layer;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
 use objc2::rc::Retained;
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
 use objc2::runtime::ProtocolObject;
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
 use objc2_metal::{
     MTLClearColor as MetalMTLClearColor, MTLCommandBuffer as MetalMTLCommandBuffer,
     MTLCommandEncoder as MetalMTLCommandEncoder, MTLCommandQueue as MetalMTLCommandQueue,
-    MTLCreateSystemDefaultDevice, MTLDevice as MetalMTLDevice, MTLDrawable as MetalMTLDrawable,
-    MTLLoadAction as MetalMTLLoadAction, MTLRenderCommandEncoder as MetalMTLRenderCommandEncoder,
+    MTLDevice as MetalMTLDevice, MTLLoadAction as MetalMTLLoadAction,
+    MTLRenderCommandEncoder as MetalMTLRenderCommandEncoder,
     MTLRenderPassColorAttachmentDescriptor as MetalMTLRenderPassColorAttachmentDescriptor,
     MTLRenderPassDescriptor as MetalMTLRenderPassDescriptor, MTLStoreAction as MetalMTLStoreAction,
 };
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 
-use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
-
-pub struct BMLInstance {
-    layer: Option<BMLLayer>,
-}
-
-impl BMLInstance {
-    pub fn new(layer: Option<BMLLayer>) -> Result<Arc<Self>> {
-        Ok(Arc::new(Self { layer }))
-    }
-}
-
-pub struct BMLLayer {
-    pub window_display: RawDisplayHandle,
-    pub window_handle: RawWindowHandle,
-    pub width: u32,
-    pub height: u32,
-}
+pub use device::MTLDevice;
+pub use instance::{BMLInstance, BMLLayer};
 
 #[derive(Default)]
 pub struct MTLRenderPassDescriptor {
@@ -44,7 +31,7 @@ pub struct MTLRenderPassDescriptor {
 }
 
 impl MTLRenderPassDescriptor {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn to_metal(&self) -> Retained<MetalMTLRenderPassDescriptor> {
         let mut result = unsafe { MetalMTLRenderPassDescriptor::new() };
 
@@ -66,7 +53,7 @@ pub struct MTLRenderPassColorAttachment {
 }
 
 impl MTLRenderPassColorAttachment {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn set_in_metal(&self, result: &Retained<MetalMTLRenderPassDescriptor>, count: usize) {
         use objc2_quartz_core::CAMetalDrawable;
 
@@ -95,7 +82,7 @@ pub struct MTLClearColor {
 }
 
 impl MTLClearColor {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn to_metal(&self) -> MetalMTLClearColor {
         MetalMTLClearColor {
             red: self.red,
@@ -113,7 +100,7 @@ pub enum MTLLoadAction {
 }
 
 impl MTLLoadAction {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn to_metal(&self) -> MetalMTLLoadAction {
         match self {
             MTLLoadAction::DontCare => MetalMTLLoadAction::DontCare,
@@ -133,7 +120,7 @@ pub enum MTLStoreAction {
 }
 
 impl MTLStoreAction {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn to_metal(&self) -> MetalMTLStoreAction {
         match self {
             MTLStoreAction::CustomSampleDepthStore => MetalMTLStoreAction::CustomSampleDepthStore,
@@ -149,7 +136,7 @@ impl MTLStoreAction {
 }
 
 pub struct MTLRenderCommandEncoder {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     metal_render_command_encoder: Retained<ProtocolObject<dyn MetalMTLRenderCommandEncoder>>,
 }
 
@@ -158,14 +145,14 @@ impl MTLRenderCommandEncoder {
         command_buffer: Arc<MTLCommandBuffer>,
         render_pass: MTLRenderPassDescriptor,
     ) -> Result<Self> {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
         return Self::metal_new(command_buffer, render_pass);
 
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
         todo!("Vulkan Support")
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn metal_new(
         command_buffer: Arc<MTLCommandBuffer>,
         render_pass: MTLRenderPassDescriptor,
@@ -185,38 +172,39 @@ impl MTLRenderCommandEncoder {
     }
 
     pub fn end_encoding(&self) {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
         return self.metal_end_encoding();
 
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
         todo!("Vulkan Support")
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn metal_end_encoding(&self) {
         self.metal_render_command_encoder.endEncoding();
     }
 }
 
 pub struct MTLDrawable {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     ca_metal_drawable: Retained<ProtocolObject<dyn CAMetalDrawable>>,
 }
 
 impl MTLDrawable {
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn from_metal(ca_metal_drawable: Retained<ProtocolObject<dyn CAMetalDrawable>>) -> Self {
         Self { ca_metal_drawable }
     }
 }
 
 pub struct MTLView {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     ca_metal_layer: Retained<CAMetalLayer>,
 }
 
 impl MTLView {
     pub fn request(device: Arc<MTLDevice>) -> Result<Arc<Self>> {
-        let bml_layer = match &device.instance.layer {
+        let bml_layer = match device.instance.layer() {
             Some(l) => l,
             None => {
                 return Err(anyhow!(
@@ -225,14 +213,17 @@ impl MTLView {
             }
         };
 
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
         return Self::metal_request(bml_layer, device.clone());
 
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
         todo!("Vulkan Support")
     }
 
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn metal_request(bml_layer: &BMLLayer, device: Arc<MTLDevice>) -> Result<Arc<Self>> {
+        use raw_window_handle::RawWindowHandle;
+
         let ca_metal_layer = match bml_layer.window_handle {
             RawWindowHandle::AppKit(handle) => unsafe { Layer::from_ns_view(handle.ns_view) },
             RawWindowHandle::UiKit(handle) => unsafe { Layer::from_ui_view(handle.ui_view) },
@@ -244,21 +235,21 @@ impl MTLView {
         let ca_metal_layer = unsafe { Retained::from_raw(ca_metal_layer).unwrap() };
 
         unsafe {
-            ca_metal_layer.setDevice(Some(device.metal_device.as_ref()));
+            ca_metal_layer.setDevice(Some(device.metal_device().as_ref()));
         }
 
         Ok(Arc::new(Self { ca_metal_layer }))
     }
 
     pub fn next_drawable(&self) -> Result<Arc<MTLDrawable>> {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
         return self.metal_next_drawable();
 
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
         todo!("Vulkan Support")
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn metal_next_drawable(&self) -> Result<Arc<MTLDrawable>> {
         let ca_metal_drawable = unsafe { self.ca_metal_layer.nextDrawable() };
 
@@ -275,60 +266,25 @@ impl MTLView {
     }
 }
 
-impl MTLDevice {
-    pub fn create(instance: Arc<BMLInstance>) -> Result<Arc<Self>> {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        return Self::metal_create(instance);
-
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-        todo!("Vulkan Support")
-    }
-
-    pub fn metal_create(instance: Arc<BMLInstance>) -> Result<Arc<Self>> {
-        let metal_device = MTLCreateSystemDefaultDevice();
-
-        let metal_device = match metal_device {
-            Some(m) => m,
-            None => return Err(anyhow!("No device found.")),
-        };
-
-        let name = metal_device.name().to_string();
-
-        Ok(Arc::new(Self {
-            name,
-            instance,
-            metal_device,
-        }))
-    }
-}
-
-pub struct MTLDevice {
-    name: String,
-    instance: Arc<BMLInstance>,
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    metal_device: Retained<ProtocolObject<dyn MetalMTLDevice>>,
-}
-
 pub struct MTLCommandQueue {
     device: Arc<MTLDevice>,
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     metal_command_queue: Retained<ProtocolObject<dyn MetalMTLCommandQueue>>,
 }
 
 impl MTLCommandQueue {
     pub fn new(device: Arc<MTLDevice>) -> Result<Arc<Self>> {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
         return Self::metal_new(device);
 
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
         todo!("Vulkan Support")
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn metal_new(device: Arc<MTLDevice>) -> Result<Arc<Self>> {
-        let metal_command_queue = device.metal_device.newCommandQueue();
+        let metal_command_queue = device.metal_device().newCommandQueue();
 
         let metal_command_queue = match metal_command_queue {
             Some(c) => c,
@@ -344,20 +300,20 @@ impl MTLCommandQueue {
 
 pub struct MTLCommandBuffer {
     queue: Arc<MTLCommandQueue>,
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     metal_command_buffer: Retained<ProtocolObject<dyn MetalMTLCommandBuffer>>,
 }
 
 impl MTLCommandBuffer {
     pub fn new(queue: Arc<MTLCommandQueue>) -> Result<Arc<Self>> {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
         return Self::metal_new(queue);
 
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
         todo!("Vulkan Support")
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn metal_new(queue: Arc<MTLCommandQueue>) -> Result<Arc<Self>> {
         let metal_command_buffer = queue.metal_command_queue.commandBuffer();
 
@@ -373,28 +329,28 @@ impl MTLCommandBuffer {
     }
 
     pub fn present(&self, drawable: Arc<MTLDrawable>) {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
         self.metal_present(drawable);
 
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
         todo!("Vulkan Support")
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn metal_present(&self, drawable: Arc<MTLDrawable>) {
         self.metal_command_buffer
             .presentDrawable(drawable.ca_metal_drawable.as_ref());
     }
 
     pub fn commit(&self) {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
         self.metal_commit();
 
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
         todo!("Vulkan Support");
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn metal_commit(&self) {
         self.metal_command_buffer.commit();
     }
