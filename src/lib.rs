@@ -9,8 +9,8 @@ use anyhow::{Result, anyhow};
 use objc2::rc::Retained;
 use objc2_metal::{
     MTLClearColor as MetalMTLClearColor, MTLCommandBuffer as MetalMTLCommandBuffer,
-    MTLCommandQueue as MetalMTLCommandQueue, MTLCreateSystemDefaultDevice,
-    MTLDevice as MetalMTLDevice, MTLLoadAction as MetalMTLLoadAction,
+    MTLCommandEncoder as MetalMTLCommandEncoder, MTLCommandQueue as MetalMTLCommandQueue,
+    MTLCreateSystemDefaultDevice, MTLDevice as MetalMTLDevice, MTLLoadAction as MetalMTLLoadAction,
     MTLRenderCommandEncoder as MetalMTLRenderCommandEncoder,
     MTLRenderPassColorAttachmentDescriptor as MetalMTLRenderPassColorAttachmentDescriptor,
     MTLRenderPassDescriptor as MetalMTLRenderPassDescriptor, MTLStoreAction as MetalMTLStoreAction,
@@ -185,6 +185,19 @@ impl MTLRenderCommandEncoder {
         Ok(Self {
             metal_render_command_encoder,
         })
+    }
+
+    pub fn end_encoding(&self) {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        return self.metal_end_encoding();
+
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        todo!("Vulkan Support")
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn metal_end_encoding(&self) {
+        self.metal_render_command_encoder.endEncoding();
     }
 }
 
