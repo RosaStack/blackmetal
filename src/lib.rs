@@ -1,7 +1,7 @@
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use objc2::runtime::ProtocolObject;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-use objc2_quartz_core::CAMetalLayer;
+use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use raw_window_metal::Layer;
 use std::sync::Arc;
 
@@ -10,8 +10,8 @@ use objc2::rc::Retained;
 use objc2_metal::{
     MTLClearColor as MetalMTLClearColor, MTLCommandBuffer as MetalMTLCommandBuffer,
     MTLCommandEncoder as MetalMTLCommandEncoder, MTLCommandQueue as MetalMTLCommandQueue,
-    MTLCreateSystemDefaultDevice, MTLDevice as MetalMTLDevice, MTLLoadAction as MetalMTLLoadAction,
-    MTLRenderCommandEncoder as MetalMTLRenderCommandEncoder,
+    MTLCreateSystemDefaultDevice, MTLDevice as MetalMTLDevice, MTLDrawable as MetalMTLDrawable,
+    MTLLoadAction as MetalMTLLoadAction, MTLRenderCommandEncoder as MetalMTLRenderCommandEncoder,
     MTLRenderPassColorAttachmentDescriptor as MetalMTLRenderPassColorAttachmentDescriptor,
     MTLRenderPassDescriptor as MetalMTLRenderPassDescriptor, MTLStoreAction as MetalMTLStoreAction,
 };
@@ -58,7 +58,7 @@ pub struct MTLRenderPassColorAttachment {
     pub clear_color: MTLClearColor,
     pub load_action: MTLLoadAction,
     pub store_action: MTLStoreAction,
-    pub view: Arc<MTLView>,
+    pub drawable: Arc<MTLDrawable>,
 }
 
 impl MTLRenderPassColorAttachment {
@@ -74,14 +74,7 @@ impl MTLRenderPassColorAttachment {
 
         unsafe {
             // TODO: Add Cross-platform options in the future.
-            color_result.setTexture(Some(
-                self.view
-                    .ca_metal_layer
-                    .nextDrawable()
-                    .unwrap()
-                    .texture()
-                    .as_ref(),
-            ));
+            color_result.setTexture(Some(self.drawable.ca_metal_drawable.texture().as_ref()));
 
             result
                 .colorAttachments()
@@ -201,6 +194,17 @@ impl MTLRenderCommandEncoder {
     }
 }
 
+pub struct MTLDrawable {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    ca_metal_drawable: Retained<ProtocolObject<dyn CAMetalDrawable>>,
+}
+
+impl MTLDrawable {
+    pub fn from_metal(ca_metal_drawable: Retained<ProtocolObject<dyn CAMetalDrawable>>) -> Self {
+        Self { ca_metal_drawable }
+    }
+}
+
 pub struct MTLView {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     ca_metal_layer: Retained<CAMetalLayer>,
@@ -240,6 +244,30 @@ impl MTLView {
         }
 
         Ok(Arc::new(Self { ca_metal_layer }))
+    }
+
+    pub fn next_drawable(&self) -> Result<Arc<MTLDrawable>> {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        return self.metal_next_drawable();
+
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        todo!("Vulkan Support")
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn metal_next_drawable(&self) -> Result<Arc<MTLDrawable>> {
+        let ca_metal_drawable = unsafe { self.ca_metal_layer.nextDrawable() };
+
+        let ca_metal_drawable = match ca_metal_drawable {
+            Some(d) => d,
+            None => {
+                return Err(anyhow!(
+                    "Failed to get the next `MTLDrawable` in the sweapchain."
+                ));
+            }
+        };
+
+        Ok(Arc::new(MTLDrawable::from_metal(ca_metal_drawable)))
     }
 }
 
@@ -338,6 +366,33 @@ impl MTLCommandBuffer {
             queue,
             metal_command_buffer,
         }))
+    }
+
+    pub fn present(&self, drawable: Arc<MTLDrawable>) {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        self.metal_present(drawable);
+
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        todo!("Vulkan Support")
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn metal_present(&self, drawable: Arc<MTLDrawable>) {
+        self.metal_command_buffer
+            .presentDrawable(drawable.ca_metal_drawable.as_ref());
+    }
+
+    pub fn commit(&self) {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        self.metal_commit();
+
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        todo!("Vulkan Support");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn metal_commit(&self) {
+        self.metal_command_buffer.commit();
     }
 }
 
