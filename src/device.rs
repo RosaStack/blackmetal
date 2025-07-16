@@ -1,5 +1,7 @@
 use crate::BMLInstance;
 use anyhow::{Result, anyhow};
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+use ash::vk;
 use std::sync::Arc;
 
 #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
@@ -14,6 +16,9 @@ pub struct MTLDevice {
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     metal_device: Retained<ProtocolObject<dyn MetalMTLDevice>>,
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    vulkan_device: VulkanMTLDevice,
 }
 
 impl MTLDevice {
@@ -22,7 +27,37 @@ impl MTLDevice {
         return Self::metal_create(instance);
 
         #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
-        todo!("Vulkan Support")
+        return Self::vulkan_create(instance);
+    }
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_create(instance: Arc<BMLInstance>) -> Result<Arc<Self>> {
+        use std::ffi::CStr;
+
+        let devices = unsafe { instance.vulkan_instance().enumerate_physical_devices()? };
+
+        // TODO: Check if the device is suitable.
+        // DON'T MAKE THIS A PERMANENT SOLUTION ME
+        // FROM THE FUTURE I BEG YOU!!!!!
+        let physical_device = devices[0];
+
+        let properties = unsafe {
+            instance
+                .vulkan_instance()
+                .get_physical_device_properties(physical_device)
+        };
+
+        let name = unsafe {
+            CStr::from_ptr(properties.device_name.as_ptr())
+                .to_str()?
+                .to_string()
+        };
+
+        Ok(Arc::new(Self {
+            name,
+            instance,
+            vulkan_device: VulkanMTLDevice { physical_device },
+        }))
     }
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
@@ -48,7 +83,17 @@ impl MTLDevice {
         &self.metal_device
     }
 
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_device(&self) -> &VulkanMTLDevice {
+        &self.vulkan_device
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }
+}
+
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+pub struct VulkanMTLDevice {
+    physical_device: vk::PhysicalDevice,
 }

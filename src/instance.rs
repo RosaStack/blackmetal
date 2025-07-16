@@ -93,9 +93,10 @@ impl BMLInstance {
         Ok(unsafe { VULKAN_ENTRY.create_instance(&instance_create_info, None)? })
     }
 
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
     pub const REQUIRED_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
-    /// Get the pointers to the validation layers names.
+    /// (Vulkan) Get the pointers to the validation layers names.
     /// Also return the corresponding `CString` to avoid dangling pointers.
     #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
     pub fn vulkan_get_layer_names_and_pointers() -> (Vec<CString>, Vec<*const c_char>) {
@@ -110,13 +111,15 @@ impl BMLInstance {
         (layer_names, layer_names_ptrs)
     }
 
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_instance(&self) -> &ash::Instance {
+        &self.vulkan_instance
+    }
+
     pub fn layer(&self) -> &Option<BMLLayer> {
         &self.layer
     }
 }
-
-#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
-pub struct VulkanBMLInstance {}
 
 pub struct BMLLayer {
     pub window_display: RawDisplayHandle,
