@@ -53,11 +53,45 @@ impl MTLDevice {
                 .to_string()
         };
 
-        Ok(Arc::new(Self {
-            name,
-            instance,
-            vulkan_device: VulkanMTLDevice { physical_device },
-        }))
+        todo!()
+
+        // Ok(Arc::new(Self {
+        //    name,
+        //    instance,
+        //    vulkan_device: VulkanMTLDevice { physical_device },
+        // }))
+    }
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_device_check(
+        instance: &Arc<BMLInstance>,
+        device: &vk::PhysicalDevice,
+    ) -> Result<()> {
+        if Self::vulkan_find_graphics_queue(instance, device).is_none() {
+            return Err(anyhow!("No Graphics Queue found."));
+        }
+
+        todo!()
+    }
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_find_graphics_queue(
+        instance: &Arc<BMLInstance>,
+        device: &vk::PhysicalDevice,
+    ) -> Option<u32> {
+        let properties = unsafe {
+            instance
+                .vulkan_instance()
+                .get_physical_device_queue_family_properties(*device)
+        };
+
+        for (index, family) in properties.iter().filter(|f| f.queue_count > 0).enumerate() {
+            if family.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                return Some(index as u32);
+            }
+        }
+
+        None
     }
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
@@ -96,4 +130,9 @@ impl MTLDevice {
 #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
 pub struct VulkanMTLDevice {
     physical_device: vk::PhysicalDevice,
+}
+
+pub struct VulkanQueueFamilies {
+    graphics_queue: u32,
+    present_queue: u32,
 }
