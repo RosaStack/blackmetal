@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 
 #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
-use ash::{Entry, Instance};
+use ash::{Entry, Instance, khr::surface, vk::SurfaceKHR};
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use std::sync::Arc;
@@ -13,6 +13,9 @@ pub struct BMLInstance {
 
     #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
     vulkan_instance: ash::Instance,
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    vulkan_surface: Option<VulkanSurface>,
 }
 
 #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
@@ -34,11 +37,30 @@ impl BMLInstance {
 
     #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
     pub fn vulkan_new(layer: Option<BMLLayer>) -> Result<Arc<Self>> {
+        use std::ops::Deref;
+
         let vulkan_instance = Self::vulkan_create_instance(&layer)?;
+
+        let vulkan_surface = unsafe {
+            match &layer {
+                Some(l) => Some(VulkanSurface {
+                    instance: surface::Instance::new(&VULKAN_ENTRY, &vulkan_instance),
+                    khr: ash_window::create_surface(
+                        VULKAN_ENTRY.deref(),
+                        &vulkan_instance,
+                        l.window_display,
+                        l.window_handle,
+                        None,
+                    )?,
+                }),
+                None => None,
+            }
+        };
 
         Ok(Arc::new(Self {
             layer,
             vulkan_instance,
+            vulkan_surface,
         }))
     }
 
@@ -116,6 +138,11 @@ impl BMLInstance {
         &self.vulkan_instance
     }
 
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_surface(&self) -> &Option<VulkanSurface> {
+        &self.vulkan_surface
+    }
+
     pub fn layer(&self) -> &Option<BMLLayer> {
         &self.layer
     }
@@ -126,4 +153,20 @@ pub struct BMLLayer {
     pub window_handle: RawWindowHandle,
     pub width: u32,
     pub height: u32,
+}
+
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+pub struct VulkanSurface {
+    instance: surface::Instance,
+    khr: SurfaceKHR,
+}
+
+impl VulkanSurface {
+    pub fn instance(&self) -> &surface::Instance {
+        &self.instance
+    }
+
+    pub fn khr(&self) -> &SurfaceKHR {
+        &self.khr
+    }
 }
