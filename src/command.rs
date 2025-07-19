@@ -1,5 +1,10 @@
 use crate::{MTLDevice, MTLDrawable, MTLRenderPassDescriptor};
 use anyhow::{Result, anyhow};
+use std::sync::Arc;
+
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+use ash::vk;
+
 #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
 use objc2::{rc::Retained, runtime::ProtocolObject};
 #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
@@ -8,13 +13,15 @@ use objc2_metal::{
     MTLCommandQueue as MetalMTLCommandQueue, MTLDevice as MetalMTLDevice,
     MTLRenderCommandEncoder as MetalMTLRenderCommandEncoder,
 };
-use std::sync::Arc;
 
 pub struct MTLCommandQueue {
     device: Arc<MTLDevice>,
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     metal_command_queue: Retained<ProtocolObject<dyn MetalMTLCommandQueue>>,
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    vulkan_command_queue: VulkanMTLCommandQueue,
 }
 
 impl MTLCommandQueue {
@@ -23,7 +30,25 @@ impl MTLCommandQueue {
         return Self::metal_new(device);
 
         #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
-        todo!("Vulkan Support")
+        return Self::vulkan_new(device);
+    }
+
+    pub fn vulkan_new(device: Arc<MTLDevice>) -> Result<Arc<Self>> {
+        let logical_device = device.vulkan_device().logical();
+        let queue_families = device.vulkan_device().queue_families();
+
+        let graphics_queue =
+            unsafe { logical_device.get_device_queue(queue_families.graphics_queue, 0) };
+        let present_queue =
+            unsafe { logical_device.get_device_queue(queue_families.present_queue, 0) };
+
+        Ok(Arc::new(Self {
+            device,
+            vulkan_command_queue: VulkanMTLCommandQueue {
+                graphics_queue,
+                present_queue,
+            },
+        }))
     }
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
@@ -148,4 +173,9 @@ impl MTLRenderCommandEncoder {
     pub fn metal_end_encoding(&self) {
         self.metal_render_command_encoder.endEncoding();
     }
+}
+
+pub struct VulkanMTLCommandQueue {
+    graphics_queue: vk::Queue,
+    present_queue: vk::Queue,
 }

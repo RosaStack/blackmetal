@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 
 #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
 use ash::{Entry, Instance, khr::surface, vk::SurfaceKHR};
