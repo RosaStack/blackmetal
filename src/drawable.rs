@@ -72,7 +72,7 @@ impl MTLView {
 
     #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
     pub fn vulkan_request(bml_layer: &BMLLayer, device: &Arc<MTLDevice>) -> Result<Arc<Self>> {
-        todo!()
+        todo!("Vulkan Support")
     }
 
     pub fn next_drawable(&self) -> Result<Arc<MTLDrawable>> {
