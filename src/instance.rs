@@ -161,6 +161,7 @@ pub struct VulkanSurface {
     khr: SurfaceKHR,
 }
 
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
 impl VulkanSurface {
     pub fn instance(&self) -> &surface::Instance {
         &self.instance

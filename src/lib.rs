@@ -71,7 +71,7 @@ impl MTLRenderPassColorAttachment {
 
         unsafe {
             // TODO: Add Cross-platform options in the future.
-            color_result.setTexture(Some(self.drawable.ca_metal_drawable.texture().as_ref()));
+            color_result.setTexture(Some(self.drawable.ca_metal_drawable().texture().as_ref()));
 
             result
                 .colorAttachments()

@@ -1,5 +1,13 @@
 use crate::{MTLDevice, MTLDrawable, MTLRenderPassDescriptor};
-use anyhow::Result;
+use anyhow::{Result, anyhow};
+#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
+use objc2::{rc::Retained, runtime::ProtocolObject};
+#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
+use objc2_metal::{
+    MTLCommandBuffer as MetalMTLCommandBuffer, MTLCommandEncoder as MetalMTLCommandEncoder,
+    MTLCommandQueue as MetalMTLCommandQueue, MTLDevice as MetalMTLDevice,
+    MTLRenderCommandEncoder as MetalMTLRenderCommandEncoder,
+};
 use std::sync::Arc;
 
 pub struct MTLCommandQueue {
@@ -75,7 +83,7 @@ impl MTLCommandBuffer {
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn metal_present(&self, drawable: Arc<MTLDrawable>) {
         self.metal_command_buffer
-            .presentDrawable(drawable.ca_metal_drawable.as_ref());
+            .presentDrawable(drawable.ca_metal_drawable().as_ref());
     }
 
     pub fn commit(&self) {

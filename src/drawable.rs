@@ -1,6 +1,13 @@
-use crate::MTLDevice;
+use crate::{BMLLayer, MTLDevice};
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
+
+#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
+use objc2::{rc::Retained, runtime::ProtocolObject};
+#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
+use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
+#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
+use raw_window_metal::Layer;
 
 pub struct MTLDrawable {
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
@@ -11,6 +18,11 @@ impl MTLDrawable {
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn from_metal(ca_metal_drawable: Retained<ProtocolObject<dyn CAMetalDrawable>>) -> Self {
         Self { ca_metal_drawable }
+    }
+
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
+    pub fn ca_metal_drawable(&self) -> &Retained<ProtocolObject<dyn CAMetalDrawable>> {
+        &self.ca_metal_drawable
     }
 }
 
@@ -31,14 +43,14 @@ impl MTLView {
         };
 
         #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-        return Self::metal_request(bml_layer, device.clone());
+        return Self::metal_request(bml_layer, &device);
 
         #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
-        todo!("Vulkan Support")
+        return Self::vulkan_request(bml_layer, &device);
     }
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-    pub fn metal_request(bml_layer: &BMLLayer, device: Arc<MTLDevice>) -> Result<Arc<Self>> {
+    pub fn metal_request(bml_layer: &BMLLayer, device: &Arc<MTLDevice>) -> Result<Arc<Self>> {
         use raw_window_handle::RawWindowHandle;
 
         let ca_metal_layer = match bml_layer.window_handle {
@@ -56,6 +68,11 @@ impl MTLView {
         }
 
         Ok(Arc::new(Self { ca_metal_layer }))
+    }
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_request(bml_layer: &BMLLayer, device: &Arc<MTLDevice>) -> Result<Arc<Self>> {
+        todo!()
     }
 
     pub fn next_drawable(&self) -> Result<Arc<MTLDrawable>> {
