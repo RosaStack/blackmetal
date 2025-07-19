@@ -224,7 +224,7 @@ impl MTLView {
             Some(d) => d,
             None => {
                 return Err(anyhow!(
-                    "Failed to get the next `MTLDrawable` in the sweapchain."
+                    "Failed to get the next `MTLDrawable` in the swapchain."
                 ));
             }
         };
