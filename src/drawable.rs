@@ -2,6 +2,9 @@ use crate::{BMLLayer, MTLDevice};
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+use ash::vk;
+
 #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
 use objc2::{rc::Retained, runtime::ProtocolObject};
 #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
@@ -29,6 +32,9 @@ impl MTLDrawable {
 pub struct MTLView {
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     ca_metal_layer: Retained<CAMetalLayer>,
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    vulkan_view: VulkanMTLView,
 }
 
 impl MTLView {
@@ -72,7 +78,134 @@ impl MTLView {
 
     #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
     pub fn vulkan_request(bml_layer: &BMLLayer, device: &Arc<MTLDevice>) -> Result<Arc<Self>> {
-        todo!("Vulkan Support")
+        //
+        // =======================================================
+        // TODO: This currently sets a lot of things by default.
+        // But in the future all of this should be converted to
+        // Metal types for finer granular control.
+        // =======================================================
+        //
+        let surface = device.instance.vulkan_surface().as_ref().unwrap();
+
+        let capabilities = unsafe {
+            surface
+                .instance()
+                .get_physical_device_surface_capabilities(
+                    *device.vulkan_device().physical(),
+                    *surface.khr(),
+                )?
+        };
+
+        let formats = unsafe {
+            surface.instance().get_physical_device_surface_formats(
+                *device.vulkan_device().physical(),
+                *surface.khr(),
+            )?
+        };
+
+        let present_modes = unsafe {
+            surface
+                .instance()
+                .get_physical_device_surface_present_modes(
+                    *device.vulkan_device().physical(),
+                    *surface.khr(),
+                )?
+        };
+
+        let surface_format = if formats.len() == 1 && formats[0].format == vk::Format::UNDEFINED {
+            vk::SurfaceFormatKHR {
+                format: vk::Format::B8G8R8A8_UNORM,
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            }
+        } else {
+            *formats
+                .iter()
+                .find(|format| {
+                    format.format == vk::Format::B8G8R8A8_UNORM
+                        && format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+                })
+                .unwrap_or(&formats[0])
+        };
+
+        let surface_present_mode = if present_modes.contains(&vk::PresentModeKHR::FIFO) {
+            vk::PresentModeKHR::FIFO
+        } else {
+            vk::PresentModeKHR::IMMEDIATE
+        };
+
+        let surface_extent = if capabilities.current_extent.width != u32::MAX {
+            capabilities.current_extent
+        } else {
+            let min = capabilities.min_image_extent;
+            let max = capabilities.max_image_extent;
+
+            let width = bml_layer.width.min(max.width).max(min.width);
+            let height = bml_layer.height.min(max.height).max(min.height);
+
+            vk::Extent2D { width, height }
+        };
+
+        let image_count = {
+            let max = capabilities.max_image_count;
+            let mut preferred = capabilities.min_image_count + 1;
+            if max > 0 && preferred > max {
+                preferred = max;
+            }
+            preferred
+        };
+
+        let queue_family_indices = [
+            device.vulkan_device().queue_families().graphics_queue,
+            device.vulkan_device().queue_families().present_queue,
+        ];
+
+        let swapchain_create_info = {
+            let mut builder = vk::SwapchainCreateInfoKHR::default()
+                .surface(*surface.khr())
+                .min_image_count(image_count)
+                .image_format(surface_format.format)
+                .image_color_space(surface_format.color_space)
+                .image_extent(surface_extent)
+                .image_array_layers(1)
+                .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT);
+
+            builder = if queue_family_indices[0] != queue_family_indices[1] {
+                builder
+                    .image_sharing_mode(vk::SharingMode::CONCURRENT)
+                    .queue_family_indices(&queue_family_indices)
+            } else {
+                builder.image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+            };
+
+            builder
+                .pre_transform(capabilities.current_transform)
+                .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+                .present_mode(surface_present_mode)
+                .clipped(true)
+        };
+
+        let swapchain_instance = ash::khr::swapchain::Device::new(
+            device.instance.vulkan_instance(),
+            device.vulkan_device().logical(),
+        );
+
+        let swapchain_khr =
+            unsafe { swapchain_instance.create_swapchain(&swapchain_create_info, None)? };
+
+        let swapchain_images = unsafe { swapchain_instance.get_swapchain_images(swapchain_khr)? };
+
+        Ok(Arc::new(Self {
+            vulkan_view: VulkanMTLView {
+                capabilities,
+                format: surface_format,
+                present_mode: surface_present_mode,
+                swapchain: VulkanSwapchain {
+                    instance: swapchain_instance,
+                    khr: swapchain_khr,
+                    images: swapchain_images,
+                },
+            },
+        }))
     }
 
     pub fn next_drawable(&self) -> Result<Arc<MTLDrawable>> {
@@ -98,4 +231,19 @@ impl MTLView {
 
         Ok(Arc::new(MTLDrawable::from_metal(ca_metal_drawable)))
     }
+}
+
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+pub struct VulkanMTLView {
+    capabilities: vk::SurfaceCapabilitiesKHR,
+    format: vk::SurfaceFormatKHR,
+    present_mode: vk::PresentModeKHR,
+    swapchain: VulkanSwapchain,
+}
+
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+pub struct VulkanSwapchain {
+    instance: ash::khr::swapchain::Device,
+    khr: vk::SwapchainKHR,
+    images: Vec<vk::Image>,
 }

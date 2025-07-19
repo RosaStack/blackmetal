@@ -249,7 +249,21 @@ pub struct VulkanMTLDevice {
     queue_families: VulkanQueueFamilies,
 }
 
+impl VulkanMTLDevice {
+    pub fn physical(&self) -> &vk::PhysicalDevice {
+        &self.physical_device
+    }
+
+    pub fn logical(&self) -> &ash::Device {
+        &self.logical_device
+    }
+
+    pub fn queue_families(&self) -> &VulkanQueueFamilies {
+        &self.queue_families
+    }
+}
+
 pub struct VulkanQueueFamilies {
-    graphics_queue: u32,
-    present_queue: u32,
+    pub graphics_queue: u32,
+    pub present_queue: u32,
 }
