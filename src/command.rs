@@ -42,11 +42,18 @@ impl MTLCommandQueue {
         let present_queue =
             unsafe { logical_device.get_device_queue(queue_families.present_queue, 0) };
 
+        let command_pool_info = vk::CommandPoolCreateInfo::default()
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            .queue_family_index(queue_families.graphics_queue);
+
+        let command_pool = unsafe { logical_device.create_command_pool(&command_pool_info, None)? };
+
         Ok(Arc::new(Self {
             device,
             vulkan_command_queue: VulkanMTLCommandQueue {
                 graphics_queue,
                 present_queue,
+                command_pool,
             },
         }))
     }
@@ -71,6 +78,9 @@ pub struct MTLCommandBuffer {
     queue: Arc<MTLCommandQueue>,
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     metal_command_buffer: Retained<ProtocolObject<dyn MetalMTLCommandBuffer>>,
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    vulkan_command_buffer: vk::CommandBuffer,
 }
 
 impl MTLCommandBuffer {
@@ -79,6 +89,10 @@ impl MTLCommandBuffer {
         return Self::metal_new(queue);
 
         #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+        return Self::vulkan_new(queue);
+    }
+
+    pub fn vulkan_new(queue: Arc<MTLCommandQueue>) -> Result<Arc<Self>> {
         todo!("Vulkan Support")
     }
 
@@ -178,4 +192,5 @@ impl MTLRenderCommandEncoder {
 pub struct VulkanMTLCommandQueue {
     graphics_queue: vk::Queue,
     present_queue: vk::Queue,
+    command_pool: vk::CommandPool,
 }
