@@ -2,11 +2,13 @@ pub mod command;
 pub mod device;
 pub mod drawable;
 pub mod instance;
+pub mod sync;
 
 pub use command::*;
 pub use device::*;
 pub use drawable::*;
 pub use instance::*;
+pub use sync::*;
 
 use std::sync::Arc;
 
@@ -30,6 +32,8 @@ use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 
 pub use device::MTLDevice;
 pub use instance::{BMLInstance, BMLLayer};
+
+pub use ash::vk;
 
 #[derive(Default)]
 pub struct MTLRenderPassDescriptor {

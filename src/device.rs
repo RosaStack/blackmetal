@@ -249,6 +249,7 @@ pub struct VulkanMTLDevice {
     queue_families: VulkanQueueFamilies,
 }
 
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
 impl VulkanMTLDevice {
     pub fn physical(&self) -> &vk::PhysicalDevice {
         &self.physical_device

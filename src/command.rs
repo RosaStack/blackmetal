@@ -33,6 +33,7 @@ impl MTLCommandQueue {
         return Self::vulkan_new(device);
     }
 
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
     pub fn vulkan_new(device: Arc<MTLDevice>) -> Result<Arc<Self>> {
         let logical_device = device.vulkan_device().logical();
         let queue_families = device.vulkan_device().queue_families();
@@ -189,6 +190,7 @@ impl MTLRenderCommandEncoder {
     }
 }
 
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
 pub struct VulkanMTLCommandQueue {
     graphics_queue: vk::Queue,
     present_queue: vk::Queue,

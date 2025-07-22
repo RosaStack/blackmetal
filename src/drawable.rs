@@ -1,6 +1,11 @@
-use crate::{BMLLayer, MTLDevice};
+use crate::{BMLLayer, MTLDevice, VulkanSurface};
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+use crate::{MTLEvent, MTLFence};
 use anyhow::{Result, anyhow};
-use std::sync::Arc;
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+use std::sync::{Arc, Mutex};
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+use std::{cell::RefCell, sync::atomic::AtomicU32};
 
 #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
 use ash::vk;
@@ -29,6 +34,23 @@ impl MTLDrawable {
     }
 }
 
+pub struct MTLTexture {
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    vulkan_image: vk::Image,
+}
+
+impl MTLTexture {
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn from_vulkan(vulkan_image: vk::Image) -> Arc<Self> {
+        Arc::new(Self { vulkan_image })
+    }
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_image(&self) -> &vk::Image {
+        &self.vulkan_image
+    }
+}
+
 pub struct MTLView {
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     ca_metal_layer: Retained<CAMetalLayer>,
@@ -42,9 +64,7 @@ impl MTLView {
         let bml_layer = match device.instance.layer() {
             Some(l) => l,
             None => {
-                return Err(anyhow!(
-                    "Can't request on a headless instance. Use `MTKView::init()` instead."
-                ));
+                return Err(anyhow!("Can't request on a headless instance."));
             }
         };
 
@@ -77,16 +97,11 @@ impl MTLView {
     }
 
     #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
-    pub fn vulkan_request(bml_layer: &BMLLayer, device: &Arc<MTLDevice>) -> Result<Arc<Self>> {
-        //
-        // =======================================================
-        // TODO: This currently sets a lot of things by default.
-        // But in the future all of this should be converted to
-        // Metal types for finer granular control.
-        // =======================================================
-        //
-        let surface = device.instance.vulkan_surface().as_ref().unwrap();
-
+    pub fn vulkan_get_surface_details(
+        surface: &VulkanSurface,
+        device: &Arc<MTLDevice>,
+        bml_layer: &BMLLayer,
+    ) -> Result<VulkanSurfaceDetails> {
         let capabilities = unsafe {
             surface
                 .instance()
@@ -145,9 +160,30 @@ impl MTLView {
             vk::Extent2D { width, height }
         };
 
+        Ok(VulkanSurfaceDetails {
+            capabilities,
+            format: surface_format,
+            present_mode: surface_present_mode,
+            extent: surface_extent,
+        })
+    }
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_request(bml_layer: &BMLLayer, device: &Arc<MTLDevice>) -> Result<Arc<Self>> {
+        //
+        // =======================================================
+        // TODO: This currently sets a lot of things by default.
+        // But in the future all of this should be converted to
+        // Metal types for finer granular control.
+        // =======================================================
+        //
+        let surface = device.instance.vulkan_surface().as_ref().unwrap();
+
+        let surface_details = Self::vulkan_get_surface_details(surface, device, bml_layer)?;
+
         let image_count = {
-            let max = capabilities.max_image_count;
-            let mut preferred = capabilities.min_image_count + 1;
+            let max = surface_details.capabilities.max_image_count;
+            let mut preferred = surface_details.capabilities.min_image_count + 1;
             if max > 0 && preferred > max {
                 preferred = max;
             }
@@ -163,9 +199,9 @@ impl MTLView {
             let mut builder = vk::SwapchainCreateInfoKHR::default()
                 .surface(*surface.khr())
                 .min_image_count(image_count)
-                .image_format(surface_format.format)
-                .image_color_space(surface_format.color_space)
-                .image_extent(surface_extent)
+                .image_format(surface_details.format.format)
+                .image_color_space(surface_details.format.color_space)
+                .image_extent(surface_details.extent)
                 .image_array_layers(1)
                 .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT);
 
@@ -178,9 +214,9 @@ impl MTLView {
             };
 
             builder
-                .pre_transform(capabilities.current_transform)
+                .pre_transform(surface_details.capabilities.current_transform)
                 .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-                .present_mode(surface_present_mode)
+                .present_mode(surface_details.present_mode)
                 .clipped(true)
         };
 
@@ -193,19 +229,54 @@ impl MTLView {
             unsafe { swapchain_instance.create_swapchain(&swapchain_create_info, None)? };
 
         let swapchain_images = unsafe { swapchain_instance.get_swapchain_images(swapchain_khr)? };
+        let textures = swapchain_images
+            .iter()
+            .map(|image| MTLTexture::from_vulkan(*image))
+            .collect::<Vec<_>>();
+
+        let in_flight_frames = Self::vulkan_create_in_flight_frames(&device)?;
 
         Ok(Arc::new(Self {
             vulkan_view: VulkanMTLView {
-                capabilities,
-                format: surface_format,
-                present_mode: surface_present_mode,
+                surface_details,
                 swapchain: VulkanSwapchain {
                     instance: swapchain_instance,
-                    khr: swapchain_khr,
-                    images: swapchain_images,
+                    khr: RefCell::new(swapchain_khr),
+                    textures: RefCell::new(textures),
+                    in_flight_frames,
                 },
             },
         }))
+    }
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_create_in_flight_frames(
+        device: &Arc<MTLDevice>,
+    ) -> Result<(Vec<VulkanSyncObject>, AtomicU32)> {
+        let mut sync_objects: Vec<VulkanSyncObject> = vec![];
+
+        // TODO: This supports double buffering only.
+        // Implement option to use triple buffering (recommended by Apple)
+        // in the future.
+        for _ in 0..2 {
+            let image_available_event = MTLEvent::make(device.clone())?;
+            let render_finished_event = MTLEvent::make(device.clone())?;
+
+            let fence = MTLFence::make(device.clone())?;
+
+            sync_objects.push(VulkanSyncObject {
+                image_available_event,
+                render_finished_event,
+                fence,
+            });
+        }
+
+        Ok((sync_objects, AtomicU32::new(0)))
+    }
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_view(&self) -> &VulkanMTLView {
+        &self.vulkan_view
     }
 
     pub fn next_drawable(&self) -> Result<Arc<MTLDrawable>> {
@@ -213,6 +284,11 @@ impl MTLView {
         return self.metal_next_drawable();
 
         #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+        return self.vulkan_next_drawable();
+    }
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_next_drawable(&self) -> Result<Arc<MTLDrawable>> {
         todo!("Vulkan Support")
     }
 
@@ -235,15 +311,51 @@ impl MTLView {
 
 #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
 pub struct VulkanMTLView {
-    capabilities: vk::SurfaceCapabilitiesKHR,
-    format: vk::SurfaceFormatKHR,
-    present_mode: vk::PresentModeKHR,
+    surface_details: VulkanSurfaceDetails,
     swapchain: VulkanSwapchain,
+}
+
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+impl VulkanMTLView {
+    pub fn swapchain(&self) -> &VulkanSwapchain {
+        &self.swapchain
+    }
 }
 
 #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
 pub struct VulkanSwapchain {
     instance: ash::khr::swapchain::Device,
-    khr: vk::SwapchainKHR,
-    images: Vec<vk::Image>,
+    khr: RefCell<vk::SwapchainKHR>,
+    textures: RefCell<Vec<Arc<MTLTexture>>>, // <- I'm so sorry for this abomination, but i have no choice ;_;.
+    in_flight_frames: (Vec<VulkanSyncObject>, AtomicU32),
+}
+
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+impl VulkanSwapchain {
+    pub fn textures(&self) -> &RefCell<Vec<Arc<MTLTexture>>> {
+        &self.textures
+    }
+
+    pub fn khr(&self) -> &RefCell<vk::SwapchainKHR> {
+        &self.khr
+    }
+
+    pub fn instance(&self) -> &ash::khr::swapchain::Device {
+        &self.instance
+    }
+}
+
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+pub struct VulkanSyncObject {
+    image_available_event: Arc<MTLEvent>,
+    render_finished_event: Arc<MTLEvent>,
+    fence: Arc<MTLFence>,
+}
+
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+pub struct VulkanSurfaceDetails {
+    capabilities: vk::SurfaceCapabilitiesKHR,
+    format: vk::SurfaceFormatKHR,
+    present_mode: vk::PresentModeKHR,
+    extent: vk::Extent2D,
 }
