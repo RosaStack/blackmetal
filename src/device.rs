@@ -1,9 +1,17 @@
 use crate::BMLInstance;
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+use crate::MTLRenderPassDescriptor;
 use anyhow::{Result, anyhow};
 #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
 use ash::vk;
 use std::ffi::CStr;
 use std::sync::Arc;
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+use std::{
+    cell::RefCell,
+    collections::BTreeMap,
+    sync::{RwLock, atomic::AtomicU32},
+};
 
 #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
 use objc2::{rc::Retained, runtime::ProtocolObject};

@@ -1,6 +1,14 @@
-use crate::{MTLDevice, MTLDrawable, MTLRenderPassDescriptor};
+use crate::{
+    MTLBeginRenderPassDescriptor, MTLDevice, MTLDrawable, MTLRenderPass, MTLRenderPassDescriptor,
+};
 use anyhow::{Result, anyhow};
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+use ash::vk::Device;
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+use crossbeam::queue::SegQueue;
 use std::sync::Arc;
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+use std::sync::RwLock;
 
 #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
 use ash::vk;
@@ -35,6 +43,8 @@ impl MTLCommandQueue {
 
     #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
     pub fn vulkan_new(device: Arc<MTLDevice>) -> Result<Arc<Self>> {
+        use crossbeam::queue::SegQueue;
+
         let logical_device = device.vulkan_device().logical();
         let queue_families = device.vulkan_device().queue_families();
 
@@ -55,6 +65,7 @@ impl MTLCommandQueue {
                 graphics_queue,
                 present_queue,
                 command_pool,
+                command_buffers: SegQueue::new(),
             },
         }))
     }
@@ -93,8 +104,31 @@ impl MTLCommandBuffer {
         return Self::vulkan_new(queue);
     }
 
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
     pub fn vulkan_new(queue: Arc<MTLCommandQueue>) -> Result<Arc<Self>> {
-        todo!("Vulkan Support")
+        Ok(Arc::new(Self {
+            queue: queue.clone(),
+            vulkan_command_buffer: queue
+                .vulkan_command_queue
+                .command_buffers()
+                .pop()
+                .unwrap_or({
+                    let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
+                        .command_pool(queue.vulkan_command_queue.command_pool)
+                        .level(vk::CommandBufferLevel::PRIMARY)
+                        .command_buffer_count(1);
+
+                    let buffers = unsafe {
+                        queue
+                            .device
+                            .vulkan_device()
+                            .logical()
+                            .allocate_command_buffers(&command_buffer_allocate_info)?
+                    };
+
+                    buffers[0]
+                }),
+        }))
     }
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
@@ -140,6 +174,21 @@ impl MTLCommandBuffer {
     }
 }
 
+impl Drop for MTLCommandBuffer {
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    fn drop(&mut self) {
+        let buffer = self.vulkan_command_buffer;
+        let buffer_queue = self.queue.vulkan_command_queue.command_buffers();
+
+        buffer_queue.push(buffer);
+    }
+
+    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
+    fn drop(&mut self) {
+        // TODO: Metal Support.
+    }
+}
+
 pub struct MTLRenderCommandEncoder {
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     metal_render_command_encoder: Retained<ProtocolObject<dyn MetalMTLRenderCommandEncoder>>,
@@ -148,19 +197,36 @@ pub struct MTLRenderCommandEncoder {
 impl MTLRenderCommandEncoder {
     pub fn new(
         command_buffer: Arc<MTLCommandBuffer>,
-        render_pass: MTLRenderPassDescriptor,
+        render_pass: Arc<MTLRenderPass>,
+        begin_descriptor: MTLBeginRenderPassDescriptor,
     ) -> Result<Self> {
         #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-        return Self::metal_new(command_buffer, render_pass);
+        return Self::metal_new(command_buffer, render_pass, begin_descriptor);
 
         #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+        return Self::vulkan_new(command_buffer, render_pass, begin_descriptor);
+    }
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_new(
+        command_buffer: Arc<MTLCommandBuffer>,
+        render_pass: Arc<MTLRenderPass>,
+        begin_descriptor: MTLBeginRenderPassDescriptor,
+    ) -> Result<Self> {
+        let mut vk_render_pass = dbg!(
+            render_pass
+                .vulkan_render_pass(&begin_descriptor)?
+                .borrow_mut()
+        );
+
         todo!("Vulkan Support")
     }
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn metal_new(
         command_buffer: Arc<MTLCommandBuffer>,
-        render_pass: MTLRenderPassDescriptor,
+        render_pass: Arc<MTLRenderPass>,
+        begin_descriptor: MTLBeginRenderPassDescriptor,
     ) -> Result<Self> {
         let metal_render_command_encoder = command_buffer
             .metal_command_buffer
@@ -195,4 +261,12 @@ pub struct VulkanMTLCommandQueue {
     graphics_queue: vk::Queue,
     present_queue: vk::Queue,
     command_pool: vk::CommandPool,
+    command_buffers: SegQueue<vk::CommandBuffer>,
+}
+
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+impl VulkanMTLCommandQueue {
+    pub fn command_buffers(&self) -> &SegQueue<vk::CommandBuffer> {
+        &self.command_buffers
+    }
 }
