@@ -111,11 +111,8 @@ impl MTLCommandBuffer {
         Ok(Arc::new(Self {
             queue: queue.clone(),
             schedule_handler_queue: SegQueue::new(),
-            vulkan_command_buffer: queue
-                .vulkan_command_queue
-                .command_buffers()
-                .pop()
-                .unwrap_or({
+            vulkan_command_buffer: {
+                if queue.vulkan_command_queue.command_buffers().is_empty() {
                     let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
                         .command_pool(queue.vulkan_command_queue.command_pool)
                         .level(vk::CommandBufferLevel::PRIMARY)
@@ -129,8 +126,14 @@ impl MTLCommandBuffer {
                             .allocate_command_buffers(&command_buffer_allocate_info)?
                     };
 
-                    buffers[0]
-                }),
+                    queue
+                        .vulkan_command_queue
+                        .command_buffers()
+                        .push(buffers[0]);
+                }
+
+                queue.vulkan_command_queue.command_buffers().pop().unwrap()
+            },
         }))
     }
 
