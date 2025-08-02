@@ -1,5 +1,5 @@
 use crate::{
-    MTLBeginRenderPassDescriptor, MTLDevice, MTLDrawable, MTLRenderPass, MTLRenderPassDescriptor,
+    MTLBeginRenderPassDescriptor, MTLDevice, MTLRenderPass, MTLRenderPassDescriptor, MTLTexture,
 };
 use anyhow::{Result, anyhow};
 #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
@@ -88,6 +88,7 @@ impl MTLCommandQueue {
 
 pub struct MTLCommandBuffer {
     queue: Arc<MTLCommandQueue>,
+    schedule_handler_queue: SegQueue<MTLCommandBufferHandler>,
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     metal_command_buffer: Retained<ProtocolObject<dyn MetalMTLCommandBuffer>>,
 
@@ -108,6 +109,7 @@ impl MTLCommandBuffer {
     pub fn vulkan_new(queue: Arc<MTLCommandQueue>) -> Result<Arc<Self>> {
         Ok(Arc::new(Self {
             queue: queue.clone(),
+            schedule_handler_queue: SegQueue::new(),
             vulkan_command_buffer: queue
                 .vulkan_command_queue
                 .command_buffers()
@@ -142,35 +144,101 @@ impl MTLCommandBuffer {
 
         Ok(Arc::new(Self {
             queue,
+            scheduled_handler_queue: SegQueue::new(),
             metal_command_buffer,
         }))
     }
 
-    pub fn present(&self, drawable: Arc<MTLDrawable>) {
+    pub fn present(&self, drawable: Arc<MTLTexture>) {
+        self.add_scheduled_handler(MTLCommandBufferHandler::Present(drawable));
+    }
+
+    pub fn add_scheduled_handler(&self, handler: MTLCommandBufferHandler) {
+        self.schedule_handler_queue.push(handler);
+    }
+
+    pub fn commit(&self) -> Result<()> {
         #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-        self.metal_present(drawable);
+        return self.metal_commit();
 
         #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
-        todo!("Vulkan Support")
+        return self.vulkan_commit();
     }
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-    pub fn metal_present(&self, drawable: Arc<MTLDrawable>) {
-        self.metal_command_buffer
-            .presentDrawable(drawable.ca_metal_drawable().as_ref());
-    }
-
-    pub fn commit(&self) {
-        #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-        self.metal_commit();
-
-        #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
-        todo!("Vulkan Support");
-    }
-
-    #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-    pub fn metal_commit(&self) {
+    pub fn metal_commit(&self) -> Result<()> {
         self.metal_command_buffer.commit();
+
+        Ok(())
+    }
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_commit(&self) -> Result<()> {
+        let device = self.queue.device.vulkan_device().logical();
+
+        while !self.schedule_handler_queue.is_empty() {
+            let handle = self.schedule_handler_queue.pop().unwrap();
+
+            match handle {
+                MTLCommandBufferHandler::Present(d) => {
+                    use std::sync::atomic::Ordering;
+
+                    let sync_object = d.vulkan_sync_object().read().unwrap();
+                    let sync_object = sync_object.as_ref().unwrap();
+
+                    let wait_semaphores = [*sync_object.image_available_event().vulkan_semaphore()];
+                    let signal_semaphores =
+                        [*sync_object.render_finished_event().vulkan_semaphore()];
+
+                    let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+                    let command_buffers = [self.vulkan_command_buffer];
+
+                    let submit_info = vk::SubmitInfo::default()
+                        .wait_semaphores(&wait_semaphores)
+                        .wait_dst_stage_mask(&wait_stages)
+                        .command_buffers(&command_buffers)
+                        .signal_semaphores(&signal_semaphores);
+
+                    unsafe {
+                        device.queue_submit(
+                            self.queue.vulkan_command_queue.graphics_queue,
+                            &[submit_info],
+                            *sync_object.fence().vulkan_fence(),
+                        )?
+                    };
+
+                    let (swapchain_instance, swapchain_khr) =
+                        d.vulkan_swapchain().as_ref().unwrap();
+
+                    let swapchains = [*swapchain_khr.as_ref()];
+                    let image_indices = [d.vulkan_image_index().load(Ordering::Relaxed)];
+
+                    let present_info = vk::PresentInfoKHR::default()
+                        .wait_semaphores(&signal_semaphores)
+                        .swapchains(&swapchains)
+                        .image_indices(&image_indices);
+
+                    let result = unsafe {
+                        swapchain_instance.queue_present(
+                            self.queue.vulkan_command_queue.present_queue,
+                            &present_info,
+                        )
+                    };
+
+                    match result {
+                        Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                            todo!("Handle Out of Date Swapchains.");
+                        }
+                        Err(error) => {
+                            return Err(anyhow!("Failed to present queue. Cause: {}", error));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -192,6 +260,8 @@ impl Drop for MTLCommandBuffer {
 pub struct MTLRenderCommandEncoder {
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     metal_render_command_encoder: Retained<ProtocolObject<dyn MetalMTLRenderCommandEncoder>>,
+
+    command_buffer: Arc<MTLCommandBuffer>,
 }
 
 impl MTLRenderCommandEncoder {
@@ -213,13 +283,53 @@ impl MTLRenderCommandEncoder {
         render_pass: Arc<MTLRenderPass>,
         begin_descriptor: MTLBeginRenderPassDescriptor,
     ) -> Result<Self> {
-        let mut vk_render_pass = dbg!(
-            render_pass
-                .vulkan_render_pass(&begin_descriptor)?
-                .borrow_mut()
-        );
+        let vk_render_pass = render_pass
+            .vulkan_render_pass(&begin_descriptor)?
+            .borrow()
+            .unwrap();
 
-        todo!("Vulkan Support")
+        begin_descriptor.vulkan_framebuffer_check(&vk_render_pass, render_pass.device().clone())?;
+
+        let device = command_buffer.queue.device.vulkan_device().logical();
+
+        unsafe {
+            device.reset_command_buffer(
+                command_buffer.vulkan_command_buffer,
+                vk::CommandBufferResetFlags::empty(),
+            )?;
+
+            device.begin_command_buffer(
+                command_buffer.vulkan_command_buffer,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::SIMULTANEOUS_USE),
+            )?;
+        }
+
+        let clear_color_values = begin_descriptor.vulkan_clear_color_values();
+
+        let texture = begin_descriptor.color_attachments[0].texture.clone();
+
+        let begin_render_pass_info = vk::RenderPassBeginInfo::default()
+            .render_pass(vk_render_pass)
+            .framebuffer(texture.vulkan_framebuffer().read().unwrap().unwrap())
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D {
+                    width: texture.width(),
+                    height: texture.height(),
+                },
+            })
+            .clear_values(&clear_color_values);
+
+        unsafe {
+            device.cmd_begin_render_pass(
+                command_buffer.vulkan_command_buffer,
+                &begin_render_pass_info,
+                vk::SubpassContents::INLINE,
+            );
+        }
+
+        Ok(Self { command_buffer })
     }
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
@@ -230,7 +340,12 @@ impl MTLRenderCommandEncoder {
     ) -> Result<Self> {
         let metal_render_command_encoder = command_buffer
             .metal_command_buffer
-            .renderCommandEncoderWithDescriptor(render_pass.to_metal().as_ref());
+            .renderCommandEncoderWithDescriptor(
+                render_pass
+                    .descriptor()
+                    .to_metal(&begin_descriptor)
+                    .as_ref(),
+            );
 
         let metal_render_command_encoder = match metal_render_command_encoder {
             Some(c) => c,
@@ -238,21 +353,36 @@ impl MTLRenderCommandEncoder {
         };
 
         Ok(Self {
+            command_buffer,
             metal_render_command_encoder,
         })
     }
 
-    pub fn end_encoding(&self) {
+    pub fn end_encoding(&self) -> Result<()> {
         #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
         return self.metal_end_encoding();
 
         #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
-        todo!("Vulkan Support")
+        return self.vulkan_end_encoding();
+    }
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_end_encoding(&self) -> Result<()> {
+        let device = self.command_buffer.queue.device.vulkan_device().logical();
+
+        unsafe {
+            device.cmd_end_render_pass(self.command_buffer.vulkan_command_buffer);
+            device.end_command_buffer(self.command_buffer.vulkan_command_buffer)?;
+        }
+
+        Ok(())
     }
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-    pub fn metal_end_encoding(&self) {
+    pub fn metal_end_encoding(&self) -> Result<()> {
         self.metal_render_command_encoder.endEncoding();
+
+        Ok(())
     }
 }
 
@@ -269,4 +399,8 @@ impl VulkanMTLCommandQueue {
     pub fn command_buffers(&self) -> &SegQueue<vk::CommandBuffer> {
         &self.command_buffers
     }
+}
+
+pub enum MTLCommandBufferHandler {
+    Present(Arc<MTLTexture>),
 }

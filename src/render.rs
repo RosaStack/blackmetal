@@ -3,8 +3,10 @@ use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use crate::{MTLDevice, MTLTarget};
+use crate::{MTLDevice, MTLTexture};
 
+#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
+use anyhow::Result;
 #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
 use anyhow::Result;
 #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
@@ -34,6 +36,10 @@ impl MTLRenderPass {
             #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
             vulkan_render_pass: RefCell::new(None),
         })
+    }
+
+    pub fn descriptor(&self) -> &MTLRenderPassDescriptor {
+        &self.descriptor
     }
 
     #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
@@ -67,6 +73,10 @@ impl MTLRenderPass {
         }));
 
         Ok(&self.vulkan_render_pass)
+    }
+
+    pub fn device(&self) -> &Arc<MTLDevice> {
+        &self.device
     }
 }
 
@@ -129,12 +139,15 @@ impl<'a> MTLRenderPassDescriptor {
 
 impl MTLRenderPassDescriptor {
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-    pub fn to_metal(&self) -> Retained<MetalMTLRenderPassDescriptor> {
+    pub fn to_metal(
+        &self,
+        begin: &MTLBeginRenderPassDescriptor,
+    ) -> Retained<MetalMTLRenderPassDescriptor> {
         let mut result = unsafe { MetalMTLRenderPassDescriptor::new() };
 
         let mut count = 0;
         for i in &self.color_attachments {
-            i.set_in_metal(&mut result, count);
+            i.set_in_metal(&mut result, begin, count);
             count += 1;
         }
 
@@ -158,6 +171,7 @@ impl MTLRenderPassDescriptor {
 }
 
 #[derive(Default, Clone)]
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
 pub struct VulkanRenderPassHandler<'a> {
     color_attachments: Vec<vk::AttachmentDescription>,
     attachment_descriptions: Vec<vk::AttachmentDescription>,
@@ -172,9 +186,40 @@ pub struct MTLBeginRenderPassDescriptor {
     pub color_attachments: Vec<MTLBeginRenderPassColorAttachment>,
 }
 
+impl MTLBeginRenderPassDescriptor {
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_framebuffer_check(
+        &self,
+        render_pass: &vk::RenderPass,
+        device: Arc<MTLDevice>,
+    ) -> Result<()> {
+        for i in &self.color_attachments {
+            if !i.texture.vulkan_is_framebuffer() {
+                unsafe {
+                    i.texture
+                        .vulkan_create_framebuffer(render_pass, device.clone())?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn vulkan_clear_color_values(&self) -> Vec<vk::ClearValue> {
+        let mut result: Vec<vk::ClearValue> = vec![];
+
+        for i in &self.color_attachments {
+            result.push(i.clear_color.to_vulkan());
+        }
+
+        result
+    }
+}
+
 pub struct MTLBeginRenderPassColorAttachment {
     pub clear_color: MTLClearColor,
-    pub target: MTLTarget,
+    pub texture: Arc<MTLTexture>,
 }
 
 pub struct MTLRenderPassColorAttachment {
@@ -184,23 +229,37 @@ pub struct MTLRenderPassColorAttachment {
 
 impl MTLRenderPassColorAttachment {
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-    pub fn set_in_metal(&self, result: &Retained<MetalMTLRenderPassDescriptor>, count: usize) {
-        use objc2_quartz_core::CAMetalDrawable;
-
+    pub fn set_in_metal(
+        &self,
+        result: &Retained<MetalMTLRenderPassDescriptor>,
+        begin_descriptor: &MTLBeginRenderPassDescriptor,
+        count: usize,
+    ) -> Result<()> {
         let color_result = MetalMTLRenderPassColorAttachmentDescriptor::new();
 
-        color_result.setClearColor(self.clear_color.to_metal());
+        color_result.setClearColor(
+            begin_descriptor.color_attachments[count]
+                .clear_color
+                .to_metal(),
+        );
         color_result.setLoadAction(self.load_action.to_metal());
         color_result.setStoreAction(self.store_action.to_metal());
 
         unsafe {
             // TODO: Add Cross-platform options in the future.
-            color_result.setTexture(Some(self.drawable.ca_metal_drawable().texture().as_ref()));
+            color_result.setTexture(Some(
+                begin_descriptor.color_attachments[count]
+                    .texture
+                    .to_metal()?
+                    .as_ref(),
+            ));
 
             result
                 .colorAttachments()
                 .setObject_atIndexedSubscript(color_result.downcast_ref(), count);
         }
+
+        Ok(())
     }
 
     #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
@@ -210,16 +269,18 @@ impl MTLRenderPassColorAttachment {
         count: usize,
     ) -> vk::AttachmentDescription {
         let format = begin.color_attachments[count]
-            .target
+            .texture
             .pixel_format()
             .to_vulkan();
 
         vk::AttachmentDescription::default()
             .format(format)
+            .samples(vk::SampleCountFlags::TYPE_1)
             .load_op(self.load_action.to_vulkan())
             .store_op(self.store_action.to_vulkan())
             .initial_layout(vk::ImageLayout::UNDEFINED)
-            .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+        //.final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
     }
 }
 
@@ -238,6 +299,20 @@ impl MTLClearColor {
             green: self.green,
             blue: self.blue,
             alpha: self.alpha,
+        }
+    }
+
+    #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+    pub fn to_vulkan(&self) -> vk::ClearValue {
+        vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [
+                    self.red as f32,
+                    self.green as f32,
+                    self.blue as f32,
+                    self.alpha as f32,
+                ],
+            },
         }
     }
 }
