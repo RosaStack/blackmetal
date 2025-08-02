@@ -247,6 +247,10 @@ impl MTLCommandBuffer {
                         }
                         _ => {}
                     }
+
+                    unsafe {
+                        device.queue_wait_idle(self.queue.vulkan_command_queue.graphics_queue)?;
+                    }
                 }
             }
         }
@@ -259,6 +263,16 @@ impl Drop for MTLCommandBuffer {
     #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
     fn drop(&mut self) {
         let buffer = self.vulkan_command_buffer;
+
+        unsafe {
+            self.queue
+                .device
+                .vulkan_device()
+                .logical()
+                .reset_command_buffer(buffer, vk::CommandBufferResetFlags::empty())
+                .unwrap();
+        }
+
         let buffer_queue = self.queue.vulkan_command_queue.command_buffers();
 
         buffer_queue.push(buffer);
@@ -306,11 +320,6 @@ impl MTLRenderCommandEncoder {
         let device = command_buffer.queue.device.vulkan_device().logical();
 
         unsafe {
-            device.reset_command_buffer(
-                command_buffer.vulkan_command_buffer,
-                vk::CommandBufferResetFlags::empty(),
-            )?;
-
             device.begin_command_buffer(
                 command_buffer.vulkan_command_buffer,
                 &vk::CommandBufferBeginInfo::default()

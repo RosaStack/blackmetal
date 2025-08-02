@@ -244,6 +244,11 @@ impl MTLTexture {
     }
 }
 
+#[derive(Default)]
+pub struct MTLViewSettings {
+    pub vsync: AtomicBool,
+}
+
 pub struct MTLView {
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     ca_metal_layer: Retained<CAMetalLayer>,
@@ -256,7 +261,12 @@ pub struct MTLView {
 }
 
 impl MTLView {
-    pub fn request(device: Arc<MTLDevice>) -> Result<Arc<Self>> {
+    pub fn request(device: Arc<MTLDevice>, settings: Option<MTLViewSettings>) -> Result<Arc<Self>> {
+        let settings = match settings {
+            Some(s) => s,
+            None => MTLViewSettings::default(),
+        };
+
         let bml_layer = match device.instance.layer() {
             Some(l) => l,
             None => {
@@ -268,7 +278,7 @@ impl MTLView {
         return Self::metal_request(bml_layer, &device);
 
         #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
-        return Self::vulkan_request(bml_layer, &device);
+        return Self::vulkan_request(bml_layer, &device, settings);
     }
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
@@ -303,6 +313,7 @@ impl MTLView {
         surface: &VulkanSurface,
         device: &Arc<MTLDevice>,
         bml_layer: &BMLLayer,
+        settings: &MTLViewSettings,
     ) -> Result<VulkanSurfaceDetails> {
         let capabilities = unsafe {
             surface
@@ -344,7 +355,9 @@ impl MTLView {
                 .unwrap_or(&formats[0])
         };
 
-        let surface_present_mode = if present_modes.contains(&vk::PresentModeKHR::FIFO) {
+        let surface_present_mode = if present_modes.contains(&vk::PresentModeKHR::FIFO)
+            && settings.vsync.load(Ordering::Relaxed)
+        {
             vk::PresentModeKHR::FIFO
         } else {
             vk::PresentModeKHR::IMMEDIATE
@@ -371,7 +384,11 @@ impl MTLView {
     }
 
     #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
-    pub fn vulkan_request(bml_layer: &BMLLayer, device: &Arc<MTLDevice>) -> Result<Arc<Self>> {
+    pub fn vulkan_request(
+        bml_layer: &BMLLayer,
+        device: &Arc<MTLDevice>,
+        settings: MTLViewSettings,
+    ) -> Result<Arc<Self>> {
         //
         // =======================================================
         // TODO: This currently sets a lot of things by default.
@@ -381,7 +398,8 @@ impl MTLView {
         //
         let surface = device.instance.vulkan_surface().as_ref().unwrap();
 
-        let surface_details = Self::vulkan_get_surface_details(surface, device, bml_layer)?;
+        let surface_details =
+            Self::vulkan_get_surface_details(surface, device, bml_layer, &settings)?;
 
         let pixel_format = MTLPixelFormat::from_vulkan(surface_details.format.format);
 
