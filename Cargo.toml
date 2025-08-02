@@ -14,7 +14,7 @@ crossbeam = "0.8.4"
 blackmetal-build = { path = "./blackmetal-build/" }
 
 [features]
-default = ["moltenvk"]
+default = []
 moltenvk = ["dep:ash", "dep:ash-window"]
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]

@@ -2,11 +2,11 @@ use crate::{
     MTLBeginRenderPassDescriptor, MTLDevice, MTLRenderPass, MTLRenderPassDescriptor, MTLTexture,
 };
 use anyhow::{Result, anyhow};
-#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
-use ash::vk::Device;
-#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
 use crossbeam::queue::SegQueue;
 use std::sync::Arc;
+
+#[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
+use ash::vk::Device;
 #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
 use std::sync::RwLock;
 
@@ -89,6 +89,7 @@ impl MTLCommandQueue {
 pub struct MTLCommandBuffer {
     queue: Arc<MTLCommandQueue>,
     schedule_handler_queue: SegQueue<MTLCommandBufferHandler>,
+
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     metal_command_buffer: Retained<ProtocolObject<dyn MetalMTLCommandBuffer>>,
 
@@ -144,7 +145,7 @@ impl MTLCommandBuffer {
 
         Ok(Arc::new(Self {
             queue,
-            scheduled_handler_queue: SegQueue::new(),
+            schedule_handler_queue: SegQueue::new(),
             metal_command_buffer,
         }))
     }
@@ -167,6 +168,18 @@ impl MTLCommandBuffer {
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn metal_commit(&self) -> Result<()> {
+        while !self.schedule_handler_queue.is_empty() {
+            use objc2_metal::MTLDrawable;
+
+            let handle = self.schedule_handler_queue.pop().unwrap();
+
+            match handle {
+                MTLCommandBufferHandler::Present(d) => {
+                    d.ca_metal_drawable().as_ref().unwrap().present()
+                }
+            }
+        }
+
         self.metal_command_buffer.commit();
 
         Ok(())

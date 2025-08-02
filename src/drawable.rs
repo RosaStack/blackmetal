@@ -1,4 +1,4 @@
-use crate::{BMLLayer, MTLDevice};
+use crate::{BMLLayer, MTLDevice, device};
 use crate::{MTLEvent, MTLFence};
 use anyhow::{Result, anyhow};
 use crossbeam::queue::SegQueue;
@@ -183,12 +183,45 @@ impl MTLTexture {
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
     pub fn from_metal(
+        device: Arc<MTLDevice>,
         ca_metal_drawable: Option<Retained<ProtocolObject<dyn CAMetalDrawable>>>,
         metal_texture: Option<Retained<ProtocolObject<dyn MetalMTLTexture>>>,
     ) -> Arc<Self> {
+        let mut width: u32 = 0;
+        let mut height: u32 = 0;
+        let mut depth: u32 = 0;
+        let mut pixel_format: MTLPixelFormat = MTLPixelFormat::Bgra8Unorm;
+
+        match &ca_metal_drawable {
+            Some(d) => unsafe {
+                let texture = d.texture();
+
+                width = texture.width() as u32;
+                height = texture.height() as u32;
+                depth = texture.depth() as u32;
+                pixel_format = MTLPixelFormat::from_metal(texture.pixelFormat());
+            },
+            None => {}
+        }
+
+        match &metal_texture {
+            Some(t) => {
+                width = t.width() as u32;
+                height = t.height() as u32;
+                depth = t.depth() as u32;
+                pixel_format = MTLPixelFormat::from_metal(t.pixelFormat());
+            }
+            None => {}
+        }
+
         Arc::new(Self {
+            device,
             ca_metal_drawable,
             metal_texture,
+            width,
+            height,
+            depth,
+            pixel_format,
         })
     }
 
@@ -262,7 +295,6 @@ impl MTLView {
             device: device.clone(),
             ca_metal_layer,
             pixel_format: MTLPixelFormat::from_metal(pixel_format),
-            is_framebuffer_created: AtomicBool::new(true),
         }))
     }
 
@@ -476,17 +508,17 @@ impl MTLView {
 }
 
 pub trait MTLViewArc {
-    fn next_drawable(&self) -> Result<Arc<MTLTexture>>;
+    fn next_drawable(&self, device: Arc<MTLDevice>) -> Result<Arc<MTLTexture>>;
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-    fn metal_next_drawable(&self) -> Result<Arc<MTLTexture>>;
+    fn metal_next_drawable(&self, device: Arc<MTLDevice>) -> Result<Arc<MTLTexture>>;
     #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
     fn vulkan_next_drawable(&self) -> Result<Arc<MTLTexture>>;
 }
 
 impl MTLViewArc for Arc<MTLView> {
-    fn next_drawable(&self) -> Result<Arc<MTLTexture>> {
+    fn next_drawable(&self, device: Arc<MTLDevice>) -> Result<Arc<MTLTexture>> {
         #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-        return self.metal_next_drawable();
+        return self.metal_next_drawable(device);
 
         #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
         return self.vulkan_next_drawable();
@@ -560,7 +592,7 @@ impl MTLViewArc for Arc<MTLView> {
     }
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-    fn metal_next_drawable(&self) -> Result<Arc<MTLTexture>> {
+    fn metal_next_drawable(&self, device: Arc<MTLDevice>) -> Result<Arc<MTLTexture>> {
         let ca_metal_drawable = unsafe { self.ca_metal_layer.nextDrawable() };
 
         let ca_metal_drawable = match ca_metal_drawable {
@@ -572,7 +604,11 @@ impl MTLViewArc for Arc<MTLView> {
             }
         };
 
-        Ok(MTLTexture::from_metal(Some(ca_metal_drawable), None))
+        Ok(MTLTexture::from_metal(
+            device,
+            Some(ca_metal_drawable),
+            None,
+        ))
     }
 }
 
