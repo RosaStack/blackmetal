@@ -275,14 +275,18 @@ impl MTLView {
         };
 
         #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-        return Self::metal_request(bml_layer, &device);
+        return Self::metal_request(bml_layer, &device, settings);
 
         #[cfg(any(not(any(target_os = "macos", target_os = "ios")), feature = "moltenvk"))]
         return Self::vulkan_request(bml_layer, &device, settings);
     }
 
     #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "moltenvk")))]
-    pub fn metal_request(bml_layer: &BMLLayer, device: &Arc<MTLDevice>) -> Result<Arc<Self>> {
+    pub fn metal_request(
+        bml_layer: &BMLLayer,
+        device: &Arc<MTLDevice>,
+        settings: MTLViewSettings,
+    ) -> Result<Arc<Self>> {
         use raw_window_handle::RawWindowHandle;
 
         let ca_metal_layer = match bml_layer.window_handle {
@@ -297,6 +301,12 @@ impl MTLView {
 
         unsafe {
             ca_metal_layer.setDevice(Some(device.metal_device().as_ref()));
+        }
+
+        unsafe {
+            let vsync = settings.vsync.load(Ordering::Relaxed);
+
+            ca_metal_layer.setDisplaySyncEnabled(vsync);
         }
 
         let pixel_format = unsafe { ca_metal_layer.pixelFormat() };

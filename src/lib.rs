@@ -2,6 +2,7 @@ pub mod command;
 pub mod device;
 pub mod drawable;
 pub mod instance;
+pub mod metalshaper;
 pub mod render;
 pub mod sync;
 

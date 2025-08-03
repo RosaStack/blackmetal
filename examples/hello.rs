@@ -32,12 +32,7 @@ impl State {
 
         let device = MTLDevice::create(instance)?;
 
-        let view = MTLView::request(
-            device.clone(),
-            Some(MTLViewSettings {
-                vsync: false.into(),
-            }),
-        )?;
+        let view = MTLView::request(device.clone(), Some(MTLViewSettings { vsync: true.into() }))?;
 
         let queue = MTLCommandQueue::new(device.clone())?;
 
