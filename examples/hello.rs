@@ -47,6 +47,8 @@ impl State {
             },
         );
 
+        metalshaper::apple_ir::parse_apple_ir(&std::fs::read("test.air")?);
+
         Ok(Self {
             window,
             device,
@@ -86,10 +88,6 @@ impl State {
         buffer.present(drawable);
 
         buffer.commit().unwrap();
-
-        let elapsed_time = start_time.elapsed();
-
-        println!("Finished rendering in: {:?}", elapsed_time);
 
         self.window.request_redraw();
     }
