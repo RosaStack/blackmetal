@@ -44,35 +44,37 @@ pub fn parse_apple_ir(content: &Vec<u8>) {
     );
 
     let content_length = content.len();
+    let content = &content[24..];
 
-    let cursor = Cursor::new(&content[24..]);
+    let cursor = Cursor::new(content);
     let mut reader = BitReader::<_, LittleEndian>::new(cursor);
 
     let mut abbreviation_list: Vec<AIRAbbreviation> = vec![];
     let mut item_vec: Vec<AIRItem> = vec![];
 
-    let mut parse = parse_abbreviation_id(&mut reader, 2, &mut abbreviation_list);
+    while reader.position_in_bits().unwrap() < (content.len() * 8) as u64 {
+        let item = parse_abbreviation_id(&mut reader, 2, &mut abbreviation_list);
+        println!("{:#?}", item);
 
-    println!("{:#?}", parse);
+        if matches!(item, AIRItem::EndBlock) {
+            continue;
+        }
 
-    parse = parse_abbreviation_id(&mut reader, 2, &mut abbreviation_list);
-
-    println!("{:#?}", parse);
-
-    parse = parse_abbreviation_id(&mut reader, 2, &mut abbreviation_list);
-
-    println!("{:#?}", parse);
+        item_vec.push(item);
+    }
 }
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
 pub enum BlockType {
-    IDENTIFICATION = 13,
+    MODULE,
+    IDENTIFICATION,
 }
 
 impl BlockType {
     pub fn from_u8(v: u8) -> Self {
         match v {
+            8 => Self::MODULE,
             13 => Self::IDENTIFICATION,
             _ => todo!("{:?} not implemented.", v),
         }
@@ -92,6 +94,7 @@ pub enum AIRItem {
     Block(AIRBlock),
     Abbreviation(AIRAbbreviation),
     Record(AIRRecord),
+    RecordRef(usize),
     Uninitialized,
     EndBlock,
 }
@@ -285,6 +288,8 @@ fn parse_abbreviation_id(
 ) -> AIRItem {
     let bit = reader.read_var::<u32>(length).unwrap();
 
+    println!("{:?}", bit);
+
     match bit {
         0 => {
             align_32(reader);
@@ -293,10 +298,6 @@ fn parse_abbreviation_id(
         1 => AIRItem::Block(parse_enter_subblock(reader, abbreviation_list)),
         2 => AIRItem::Abbreviation(parse_define_abbreviation(reader, abbreviation_list)),
         3 => todo!("UNABBREV_RECORD"),
-        _ => AIRItem::Record(parse_external_record(
-            reader,
-            abbreviation_list,
-            bit as usize - 4,
-        )),
+        _ => AIRItem::RecordRef(bit as usize),
     }
 }

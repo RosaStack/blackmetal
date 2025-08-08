@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Instant};
 
 use anyhow::Result;
-use blackmetal::*;
+use rosemetal::*;
 use winit::{
     application::ApplicationHandler,
     event::{KeyEvent, WindowEvent},

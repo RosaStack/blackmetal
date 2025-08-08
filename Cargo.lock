@@ -130,25 +130,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "blackmetal"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ash",
- "ash-window",
- "bitstream-io",
- "blackmetal-build",
- "crossbeam",
- "objc2 0.6.1",
- "objc2-metal 0.3.1",
- "objc2-quartz-core 0.3.1",
- "pollster",
- "raw-window-handle",
- "raw-window-metal 1.1.0",
- "winit",
-]
-
-[[package]]
 name = "blackmetal-build"
 version = "0.1.0"
 
@@ -1177,6 +1158,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5407465600fb0548f1442edf71dd20683c6ed326200ace4b1ef0763521bb3b77"
 dependencies = [
  "bitflags 2.9.1",
+]
+
+[[package]]
+name = "rosemetal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "ash-window",
+ "bitstream-io",
+ "blackmetal-build",
+ "crossbeam",
+ "objc2 0.6.1",
+ "objc2-metal 0.3.1",
+ "objc2-quartz-core 0.3.1",
+ "pollster",
+ "raw-window-handle",
+ "raw-window-metal 1.1.0",
+ "winit",
 ]
 
 [[package]]
